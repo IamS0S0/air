@@ -139,7 +139,7 @@ int main(int argc, char **argv)
       }
     }
     // 当无人机到达起飞点高度后，悬停3秒后进入任务模式，提高视觉效果
-    if (fabs(local_pos.pose.pose.position.z - ALTITUDE) < 0.2)
+    if (fabs(local_pos.pose.pose.position.z - ALTITUDE) < 0.1)
     {
       if (ros::Time::now() - last_request > ros::Duration(1.0))
       {
@@ -169,7 +169,7 @@ int main(int argc, char **argv)
           mission_num = 2;
           last_request = ros::Time::now();
         }
-	    else if(ros::Time::now() - last_request >= ros::Duration(3.0))
+	    else if(ros::Time::now() - last_request >= ros::Duration(5.0))
         {
           mission_num = 2;
           last_request = ros::Time::now();
@@ -264,28 +264,90 @@ break;
     rate.sleep();
     
     if(mission_num == -1) 
-    {
-
-      if(qr_detected){
-          string t="QRcontent:"+content+"  x:"+to_string(qr_world.x)+"  y:"+to_string(qr_world.y)+"  z:"+to_string(qr_world.z);
-          target_msg.data=t;
-          target_pub.publish(target_msg);
-          ROS_INFO("QRcode in world :x:%.2f,y:%.2f,z:%.2f",qr_world.x,qr_world.y,qr_world.z);
- 
+{
+  // 1. 发布二维码识别结果（原有代码保留）
+  if(qr_detected){
+    string t="QRcontent:"+content+"  x:"+to_string(qr_world.x)+"  y:"+to_string(qr_world.y)+"  z:"+to_string(qr_world.z);
+    target_msg.data=t;
+    target_pub.publish(target_msg);
+    ROS_INFO("QRcode in world :x:%.2f,y:%.2f,z:%.2f",qr_world.x,qr_world.y,qr_world.z);
     ROS_INFO("QR content:%s",content.c_str());
-        }
-        else{
-          string t="NOT FIND QR";
-           target_msg.data=t;
-          target_pub.publish(target_msg);
-        }
+  }
+  else{
+    string t="NOT FIND QR";
+    target_msg.data=t;
+    target_pub.publish(target_msg);
+  }
+  ROS_INFO("published to /target");
 
-         ROS_INFO("published to /target");
-      exit(0);
+  // 2. 新增：停机核心逻辑
+  ROS_INFO("开始执行停机流程...");
+  
+  // ① 先设置为LAND模式（确保无人机落地，避免空中停机）
+  mavros_msgs::SetMode land_set_mode;
+  land_set_mode.request.custom_mode = "LAND";
+  if (set_mode_client.call(land_set_mode) && land_set_mode.response.mode_sent) {
+    ROS_INFO("已切换为LAND模式，无人机将降落");
+    // 等待5秒，确保无人机落地
+    ros::Duration(5.0).sleep();
+  } else {
+    ROS_WARN("切换LAND模式失败，强制尝试上锁停机");
+  }
+
+  // ② 发送DISARM指令（上锁，停止转桨）
+  mavros_msgs::CommandBool disarm_cmd;
+disarm_cmd.request.value = false; // false=上锁
+bool disarm_success = false;
+int disarm_retry = 5; // 最多重试5次
+ros::Duration(0.5).sleep(); // 先等0.5秒，让LAND模式落地稳定
+
+  
+  // ③ 发送MAVLink指令强制停机（备用方案）- 同样增加重试
+  mavros_msgs::CommandLong disarm_mavlink;
+  disarm_mavlink.request.command = 400; // MAV_CMD_COMPONENT_ARM_DISARM
+  disarm_mavlink.request.confirmation = 0;
+  disarm_mavlink.request.param1 = 0.0; // 0=DISARM
+  disarm_mavlink.request.param2 = 21196.0; // 魔术数
+  int mavlink_retry = 3;
+  bool mavlink_success = false;
+  
+  while (mavlink_retry > 0 && !mavlink_success && ros::ok()) {
+    if (ctrl_pwm_client.call(disarm_mavlink) && disarm_mavlink.response.success) {
+      mavlink_success = true;
+      ROS_INFO("MAVLink停机指令发送成功（第%d次尝试）", 4 - mavlink_retry);
+      // 再次校验状态
+      ros::Duration(0.2).sleep();
+      ros::spinOnce();
+      if (!current_state.armed) {
+        disarm_success = true;
+        ROS_INFO("备用指令生效：无人机已上锁");
+      }
+    } else {
+      ROS_WARN("MAVLink指令第%d次失败，剩余重试：%d", 4 - mavlink_retry, mavlink_retry - 1);
     }
+    mavlink_retry--;
+    ros::Duration(0.2).sleep();
+  }
+  
+  if (!mavlink_success) {
+    ROS_FATAL("停机指令失败！请立即手动操作停止螺旋桨！");
+  }
+
+// 最终校验+延时，确保螺旋桨停稳
+ros::Duration(1.0).sleep();
+ros::spinOnce();
+if (current_state.armed) {
+  ROS_ERROR("最终校验：无人机仍未上锁！");
+} else {
+  ROS_INFO("停机流程完成，螺旋桨已停止转动");
+}
+
+exit(0);
+  }
   }
   return 0;
 }
+
 
 
 

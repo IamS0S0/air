@@ -20,7 +20,6 @@
 #include <string>
 #include <tf/transform_listener.h>
 #include <vector>
-
 /*新的识别*/
 #include <cv_bridge/cv_bridge.h>
 #include <opencv2/objdetect.hpp>
@@ -37,24 +36,31 @@ mavros_msgs::PositionTarget setpoint_raw;
 *************************************************************************/
 void state_cb(const mavros_msgs::State::ConstPtr &msg);
 void local_pos_cb(const nav_msgs::Odometry::ConstPtr &msg);
-bool mission_pos_cruise(float x, float y, float z, float yaw, float error_max);
-bool precision_land();
-int isobs(double x, double y, double total);
+void image_cb(const sensor_msgs::ImageConstPtr &msg);
 void lidar_cb(const sensor_msgs::LaserScan::ConstPtr &scan);
-bool collision_avoidance(float x, float y, float z, float err_max, double max_vel = 0.8);
-double call_mid_len(double angle1, double angle2);
-int cal_middle(double *front, int max_start, int max_end);
-float satfunc(float data, float Max);
-double call_len(double angle1, double angle2);
+void init_location(double &init_x, double &init_y);
 void cal_min_distance();
 void cal_best_angle();
-bool is_exist_ring();
-double cal_y(double angle);
-double cal_x(double angle);
+
+bool mission_pos_cruise(float x, float y, float z, float yaw, float error_max);
+bool precision_land();
+bool collision_avoidance(float x, float y, float z, float err_max, double max_vel = 0.8);
 bool cross_ring(double x, double y, double err_max);
 bool move_in_drone_coordinate(double x, double y, double err_max);
 bool collision_in_drone_coordinate(double x, double y, double err_max, double max_vel);
-void init_location(double &init_x, double &init_y);
+bool is_exist_ring();
+
+int isobs(double x, double y, double total);
+int cal_middle(double *front, int max_start, int max_end);
+
+float satfunc(float data, float Max);
+
+double call_mid_len(double angle1, double angle2);
+double call_len(double angle1, double angle2);
+double cal_y(double angle);
+double cal_x(double angle);
+
+
 double best_angle;
 double distance_c = 9999;
 double angle_c;
@@ -365,6 +371,7 @@ void lidar_cb(const sensor_msgs::LaserScan::ConstPtr &scan)
 函数 6:避障
 控制无人机避障飞向（x, y, z）位置，yaw为目标航向角，error_max为允许的误差范围
 进入函数后开始控制无人机飞向目标点，返回值为bool型，表示是否到达目标点
+存在的问题：在穿门时容易撞到门框，后续还应调整相关系数
 *************************************************************************/
 float collision_avoidance_last_position_x = 0;
 float collision_avoidance_last_position_y = 0;
@@ -692,6 +699,7 @@ bool is_exist_ring()
 ......
 如此反复的过程，直到前方不存在圆环时直接前往终点
 进入函数后开始控制无人机寻找圆环进入状态循环，返回值为bool型，表示是否到达目标点
+存在的问题：在穿环时位置调整不够精确会撞到环/被卡住，但要求精确后导致飞行时间大大增加
 *************************************************************************/
 bool cross_ring(double x, double y, double err_max)
 {
@@ -931,6 +939,7 @@ geometry_msgs::Point change_to_world(float u, float v)
 /************************************************************************
 函数 24:飞行并搜索二维码
 如有疑问请问团队s0
+存在的问题：迫于时间原因，识别数字与字母部分还未完成。
 *************************************************************************/
 void fly(float v)
 {
