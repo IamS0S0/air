@@ -1,6 +1,7 @@
 #include <template.h>
 
 // 全局变量定义
+geometry_msgs::Point qr_world;
 int mission_num = 0;
 float if_debug = 0;
 float err_max = 0.2;
@@ -10,6 +11,8 @@ void print_param()
   std::cout << "err_max: " << err_max << std::endl;
   std::cout << "ALTITUDE: " << ALTITUDE << std::endl;
   std::cout << "if_debug: " << if_debug << std::endl;
+  std::cout << "range_min: " << range_min << std::endl;
+  std::cout << "range_max: " << range_max << std::endl;
   if(if_debug == 1) cout << "自动offboard" << std::endl;
   else cout << "遥控器offboard" << std::endl;
 }
@@ -24,9 +27,17 @@ int main(int argc, char **argv)
   ros::init(argc, argv, "template");
   ros::NodeHandle nh;
 
+//订阅相机
+  ros::Subscriber image_sub = nh.subscribe<sensor_msgs::Image>("/image_raw", 10, image_cb);
+
   // 订阅mavros相关话题
   ros::Subscriber state_sub = nh.subscribe<mavros_msgs::State>("mavros/state", 10, state_cb);
   ros::Subscriber local_pos_sub = nh.subscribe<nav_msgs::Odometry>("/mavros/local_position/odom", 10, local_pos_cb);
+
+  //插入的起始
+  // 【订阅】Lidar数据
+  ros::Subscriber lidar_sub = nh.subscribe<sensor_msgs::LaserScan>("/laser/scan", 1000, lidar_cb);
+  //插入的终止
 
   // 发布无人机多维控制话题
   ros::Publisher mavros_setpoint_pos_pub = nh.advertise<mavros_msgs::PositionTarget>("/mavros/setpoint_raw/local", 100);
@@ -36,13 +47,20 @@ int main(int argc, char **argv)
   ros::ServiceClient set_mode_client = nh.serviceClient<mavros_msgs::SetMode>("mavros/set_mode");
   ros::ServiceClient ctrl_pwm_client = nh.serviceClient<mavros_msgs::CommandLong>("mavros/cmd/command");
 
+
+//新的目标识别的target
+ ros::Publisher target_pub = nh.advertise<std_msgs::String>("/target", 10);
+
+
   // 设置话题发布频率，需要大于2Hz，飞控连接有500ms的心跳包
   ros::Rate rate(20);
 
   // 参数读取
 
-  nh.param<float>("err_max", err_max, 0);
+  nh.param<float>("err_max", err_max, 0.2);
   nh.param<float>("if_debug", if_debug, 0);
+  nh.param<float>("R_outside", R_outside, 2);
+  nh.param<float>("R_inside", R_inside, 1);
   print_param();
 
   
@@ -87,6 +105,10 @@ int main(int argc, char **argv)
 
   // 记录当前时间，并赋值给变量last_request
   ros::Time last_request = ros::Time::now();
+
+
+  //记录二维码内容和位置
+  std_msgs::String target_msg;
 
   while (ros::ok())
   {
@@ -156,17 +178,82 @@ int main(int argc, char **argv)
 
       //世界系前进
       case 2:
-        if (mission_pos_cruise(1.0, 0.0, ALTITUDE, 0.0 , err_max))
+        if (collision_avoidance(8, 0, ALTITUDE , err_max))
         {
           mission_num = 3;
           last_request = ros::Time::now();
         }
         break;
 
-      //降落
       case 3:
+        if(mission_pos_cruise(8, 2.5, ALTITUDE, 0, err_max))
+        {
+          mission_num = 4; // 任务结束
+          last_request = ros::Time::now();
+        }
+        break;
+        case 4:
+        if(collision_avoidance(16, 2.5,ALTITUDE , err_max))
+        {
+          mission_num = 5; // 任务结束
+          last_request = ros::Time::now();
+        }
+        break;
+        case 5:
+        if(cross_ring(24.0,1.0, err_max)){
+          mission_num = 6; // 任务结束
+          last_request = ros::Time::now();
+        }
+        break;
+	
+  case 6://前往目标识别区域
+   if (mission_pos_cruise(27.6,-1,ALTITUDE,0,err_max))
+        {ROS_INFO("at finding area!");
+          mission_num = 7;
+          last_request = ros::Time::now();
+        }
+        break;
+
+  case 7:
+  
+    if(qr_detected==false){fly(0.4); ROS_INFO("still finding QR");}
+  
+  if(qr_detected){
+    fly(0.0);
+   qr_world=change_to_world(qr_center.x,qr_center.y);
+    ROS_INFO("QRcode in world :x:%.2f,y:%.2f,z:%.2f",qr_world.x,qr_world.y,qr_world.z);
+ 
+    ROS_INFO("QR content:%s",content.c_str());
+     last_request = ros::Time::now();
+    mission_num=8;
+  }
+  
+  
+if (fabs(local_pos.pose.pose.position.y - 2.9 - init_position_y_take_off) < 0.1)
+	{
+    if(qr_detected==false){
+      ROS_INFO("not find QRcode!");
+       last_request = ros::Time::now();
+    }
+    mission_num=8;
+  }
+  break;
+  
+  case 8:{
+       if(mission_pos_cruise(35,1,ALTITUDE,0,err_max)){
+
+        ROS_INFO("at landing place!");
+        mission_num=9;
+        last_request = ros::Time::now();
+       }
+break;
+  }
+
+
+		case 9:
         if(precision_land())
         {
+
           mission_num = -1; // 任务结束
           last_request = ros::Time::now();
         }
@@ -178,10 +265,27 @@ int main(int argc, char **argv)
     
     if(mission_num == -1) 
     {
+
+      if(qr_detected){
+          string t="QRcontent:"+content+"  x:"+to_string(qr_world.x)+"  y:"+to_string(qr_world.y)+"  z:"+to_string(qr_world.z);
+          target_msg.data=t;
+          target_pub.publish(target_msg);
+          ROS_INFO("QRcode in world :x:%.2f,y:%.2f,z:%.2f",qr_world.x,qr_world.y,qr_world.z);
+ 
+    ROS_INFO("QR content:%s",content.c_str());
+        }
+        else{
+          string t="NOT FIND QR";
+           target_msg.data=t;
+          target_pub.publish(target_msg);
+        }
+
+         ROS_INFO("published to /target");
       exit(0);
     }
   }
   return 0;
 }
+
 
 

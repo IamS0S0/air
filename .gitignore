@@ -1,9 +1,21 @@
-/.DS_Store
-**/.DS_Store
-*.DS_Store
+# 通用忽略
+.DS_Store
+*.log
+tmp/
+cache/
 
-# ROS build directories
-build/
-devel/
-.Trash-1000/
+# Python 项目
+venv/
+__pycache__/
+*.pyc
+.env
+
+# 前端项目
+node_modules/
+dist/
+npm-debug.log
+
+# Ubuntu 系统/编辑器配置
+.idea/
 .vscode/
+*.swp  # vim 临时文件

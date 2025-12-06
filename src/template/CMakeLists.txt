@@ -18,8 +18,15 @@ find_package(catkin REQUIRED COMPONENTS
   std_msgs
   sensor_msgs
   geometry_msgs
+    nav_msgs  # 新增：代码中使用了nav_msgs/Odometry
+  tf        # 新增：代码中使用了tf/transform_listener.h
+  cv_bridge # 新增：代码中使用了cv_bridge转换图像
   message_generation
 )
+
+# 新增：查找OpenCV（代码中使用了OpenCV的二维码检测和图像处理）
+find_package(OpenCV REQUIRED)
+
 catkin_package(
   INCLUDE_DIRS include
 )
@@ -28,9 +35,10 @@ catkin_package(
 include_directories(
   include
   ${catkin_INCLUDE_DIRS}
+   ${OpenCV_INCLUDE_DIRS}  # 新增：OpenCV头文件目录
   ${PCL_INCLUDE_DIRS}
 )
 
 
 add_executable(template src/template.cpp)
-target_link_libraries(template ${catkin_LIBRARIES} )
+target_link_libraries(template ${catkin_LIBRARIES}  ${OpenCV_LIBRARIES}  )

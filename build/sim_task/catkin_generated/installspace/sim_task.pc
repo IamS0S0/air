@@ -1,0 +1,8 @@
+prefix=/home/s0/airhust_tutorial_ws/install
+
+Name: sim_task
+Description: Description of sim_task
+Version: 0.0.0
+Cflags: 
+Libs: -L${prefix}/lib 
+Requires: 
